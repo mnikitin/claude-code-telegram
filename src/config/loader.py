@@ -122,10 +122,10 @@ def _validate_config(settings: Settings) -> None:
     if settings.enable_project_threads:
         if (
             settings.project_threads_mode == "group"
-            and settings.project_threads_chat_id is None
+            and not settings.project_threads_chat_ids
         ):
             raise InvalidConfigError(
-                "Project thread mode is 'group' but no project_threads_chat_id provided"
+                "Project thread mode is 'group' but no project_threads_chat_ids provided"
             )
         if not settings.projects_config_path:
             raise InvalidConfigError(

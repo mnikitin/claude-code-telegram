@@ -272,7 +272,7 @@ def test_log_level_validation():
 
 
 def test_project_threads_validation_requires_chat_id_in_group_mode(tmp_path):
-    """Group thread mode requires project_threads_chat_id."""
+    """Group thread mode requires project_threads_chat_ids."""
     project_dir = tmp_path / "projects"
     project_dir.mkdir()
     app_dir = project_dir / "app"
@@ -293,7 +293,7 @@ def test_project_threads_validation_requires_chat_id_in_group_mode(tmp_path):
             projects_config_path=str(config_file),
         )
 
-    assert "project_threads_chat_id required" in str(exc_info.value)
+    assert "project_threads_chat_ids required" in str(exc_info.value)
 
 
 def test_project_threads_validation_requires_projects_config(tmp_path):
@@ -307,7 +307,7 @@ def test_project_threads_validation_requires_projects_config(tmp_path):
             telegram_bot_username="test_bot",
             approved_directory=str(project_dir),
             enable_project_threads=True,
-            project_threads_chat_id=-1001234567890,
+            project_threads_chat_ids=[-1001234567890],
             projects_config_path=None,
         )
 
@@ -333,7 +333,7 @@ def test_project_threads_validation_blank_projects_config_path_fails(tmp_path):
 
 
 def test_project_threads_validation_private_mode_no_chat_id(tmp_path):
-    """Private thread mode does not require project_threads_chat_id."""
+    """Private thread mode does not require project_threads_chat_ids."""
     project_dir = tmp_path / "projects"
     project_dir.mkdir()
     app_dir = project_dir / "app"
@@ -354,11 +354,11 @@ def test_project_threads_validation_private_mode_no_chat_id(tmp_path):
     )
 
     assert settings.project_threads_mode == "private"
-    assert settings.project_threads_chat_id is None
+    assert settings.project_threads_chat_ids is None
 
 
 def test_project_threads_validation_private_mode_empty_chat_id(tmp_path):
-    """Private mode accepts blank project_threads_chat_id from env/.env."""
+    """Private mode accepts blank project_threads_chat_ids from env/.env."""
     project_dir = tmp_path / "projects"
     project_dir.mkdir()
     app_dir = project_dir / "app"
@@ -375,16 +375,16 @@ def test_project_threads_validation_private_mode_empty_chat_id(tmp_path):
         approved_directory=str(project_dir),
         enable_project_threads=True,
         project_threads_mode="private",
-        project_threads_chat_id="",
+        project_threads_chat_ids="",
         projects_config_path=str(config_file),
     )
 
     assert settings.project_threads_mode == "private"
-    assert settings.project_threads_chat_id is None
+    assert settings.project_threads_chat_ids is None
 
 
 def test_project_threads_validation_group_mode_empty_chat_id_fails(tmp_path):
-    """Group mode rejects blank project_threads_chat_id."""
+    """Group mode rejects blank project_threads_chat_ids."""
     project_dir = tmp_path / "projects"
     project_dir.mkdir()
     app_dir = project_dir / "app"
@@ -402,11 +402,11 @@ def test_project_threads_validation_group_mode_empty_chat_id_fails(tmp_path):
             approved_directory=str(project_dir),
             enable_project_threads=True,
             project_threads_mode="group",
-            project_threads_chat_id="",
+            project_threads_chat_ids="",
             projects_config_path=str(config_file),
         )
 
-    assert "project_threads_chat_id required" in str(exc_info.value)
+    assert "project_threads_chat_ids required" in str(exc_info.value)
 
 
 def test_project_threads_sync_action_interval_validation(tmp_path):

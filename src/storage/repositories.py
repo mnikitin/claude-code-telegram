@@ -250,6 +250,22 @@ class ProjectThreadRepository:
             row = await cursor.fetchone()
             return ProjectThreadModel.from_row(row) if row else None
 
+    async def get_any_active_by_slug(
+        self, project_slug: str
+    ) -> Optional[ProjectThreadModel]:
+        """Find any active mapping for a project, regardless of chat_id."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM project_threads
+                WHERE project_slug = ? AND is_active = TRUE
+                LIMIT 1
+            """,
+                (project_slug,),
+            )
+            row = await cursor.fetchone()
+            return ProjectThreadModel.from_row(row) if row else None
+
     async def get_by_chat_project(
         self, chat_id: int, project_slug: str
     ) -> Optional[ProjectThreadModel]:

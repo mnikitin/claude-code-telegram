@@ -190,7 +190,7 @@ class MessageOrchestrator:
             return False
 
         if self.settings.project_threads_mode == "group":
-            if chat.id != self.settings.project_threads_chat_id:
+            if chat.id not in (self.settings.project_threads_chat_ids or []):
                 await self._reject_for_thread_mode(
                     update,
                     manager.guidance_message(mode=self.settings.project_threads_mode),

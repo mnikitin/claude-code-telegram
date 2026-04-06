@@ -232,7 +232,7 @@ async def test_sync_threads_group_mode_rejects_non_target_chat(tmp_path: Path):
         approved_directory=str(approved),
         enable_project_threads=True,
         project_threads_mode="group",
-        project_threads_chat_id=-10012345,
+        project_threads_chat_ids=[-10012345],
         projects_config_path=str(config_file),
     )
 

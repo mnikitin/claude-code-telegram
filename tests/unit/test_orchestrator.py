@@ -45,7 +45,7 @@ def group_thread_settings(tmp_dir):
         agentic_mode=False,
         enable_project_threads=True,
         project_threads_mode="group",
-        project_threads_chat_id=-1001234567890,
+        project_threads_chat_ids=[-1001234567890],
         projects_config_path=str(config_file),
     )
 

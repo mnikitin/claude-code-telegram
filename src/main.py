@@ -255,24 +255,25 @@ async def run_application(app: Dict[str, Any]) -> None:
             bot.deps["project_threads_manager"] = project_threads_manager
 
             if config.project_threads_mode == "group":
-                if config.project_threads_chat_id is None:
+                if not config.project_threads_chat_ids:
                     raise ConfigurationError(
-                        "Group thread mode requires PROJECT_THREADS_CHAT_ID"
+                        "Group thread mode requires PROJECT_THREADS_CHAT_IDS"
                     )
-                sync_result = await project_threads_manager.sync_topics(
-                    bot.app.bot,
-                    chat_id=config.project_threads_chat_id,
-                )
-                logger.info(
-                    "Project thread startup sync complete",
-                    mode=config.project_threads_mode,
-                    chat_id=config.project_threads_chat_id,
-                    created=sync_result.created,
-                    reused=sync_result.reused,
-                    renamed=sync_result.renamed,
-                    failed=sync_result.failed,
-                    deactivated=sync_result.deactivated,
-                )
+                for chat_id in config.project_threads_chat_ids:
+                    sync_result = await project_threads_manager.sync_topics(
+                        bot.app.bot,
+                        chat_id=chat_id,
+                    )
+                    logger.info(
+                        "Project thread startup sync complete",
+                        mode=config.project_threads_mode,
+                        chat_id=chat_id,
+                        created=sync_result.created,
+                        reused=sync_result.reused,
+                        renamed=sync_result.renamed,
+                        failed=sync_result.failed,
+                        deactivated=sync_result.deactivated,
+                    )
 
         # Now wire up components that need the Telegram Bot instance
         telegram_bot = bot.app.bot

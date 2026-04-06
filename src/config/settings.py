@@ -316,8 +316,9 @@ class Settings(BaseSettings):
         "private",
         description="Project thread mode: private chat topics or group forum topics",
     )
-    project_threads_chat_id: Optional[int] = Field(
-        None, description="Telegram forum chat ID where project topics are managed"
+    project_threads_chat_ids: Optional[List[int]] = Field(
+        None,
+        description="Telegram forum chat ID(s) where project topics are managed (comma-separated)",
     )
     projects_config_path: Optional[Path] = Field(
         None, description="Path to YAML project registry for thread mode"
@@ -334,7 +335,7 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", mode="before")
+    @field_validator("allowed_users", "notification_chat_ids", "project_threads_chat_ids", mode="before")
     @classmethod
     def parse_int_list(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated integer lists."""
@@ -343,6 +344,8 @@ class Settings(BaseSettings):
         if isinstance(v, int):
             return [v]
         if isinstance(v, str):
+            if not v.strip():
+                return None
             return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
         if isinstance(v, list):
             return [int(uid) for uid in v]
@@ -448,20 +451,7 @@ class Settings(BaseSettings):
             )
         return provider
 
-    @field_validator("project_threads_chat_id", mode="before")
-    @classmethod
-    def validate_project_threads_chat_id(cls, v: Any) -> Optional[int]:
-        """Allow empty chat ID for private mode by treating blank values as None."""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            value = v.strip()
-            if not value:
-                return None
-            return int(value)
-        if isinstance(v, int):
-            return v
-        return v  # type: ignore[no-any-return]
+    # project_threads_chat_ids is now parsed by parse_int_list (supports comma-separated)
 
     @field_validator("log_level")
     @classmethod
@@ -488,10 +478,10 @@ class Settings(BaseSettings):
         if self.enable_project_threads:
             if (
                 self.project_threads_mode == "group"
-                and self.project_threads_chat_id is None
+                and not self.project_threads_chat_ids
             ):
                 raise ValueError(
-                    "project_threads_chat_id required when "
+                    "project_threads_chat_ids required when "
                     "project_threads_mode is 'group'"
                 )
             if not self.projects_config_path:

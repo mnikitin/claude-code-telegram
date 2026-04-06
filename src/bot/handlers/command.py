@@ -238,24 +238,24 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         target_chat_id = update.effective_chat.id
     else:
-        if settings.project_threads_chat_id is None:
+        if not settings.project_threads_chat_ids:
             await status_msg.edit_text(
                 "❌ <b>Group Thread Mode Misconfigured</b>\n\n"
-                "Set <code>PROJECT_THREADS_CHAT_ID</code> first.",
+                "Set <code>PROJECT_THREADS_CHAT_IDS</code> first.",
                 parse_mode="HTML",
             )
             return
         if (
             not update.effective_chat
-            or update.effective_chat.id != settings.project_threads_chat_id
+            or update.effective_chat.id not in settings.project_threads_chat_ids
         ):
             await status_msg.edit_text(
                 "❌ <b>Group Thread Mode</b>\n\n"
-                "Run <code>/sync_threads</code> in the configured project threads group.",
+                "Run <code>/sync_threads</code> in one of the configured project threads groups.",
                 parse_mode="HTML",
             )
             return
-        target_chat_id = settings.project_threads_chat_id
+        target_chat_id = update.effective_chat.id
 
     try:
         if not settings.projects_config_path:

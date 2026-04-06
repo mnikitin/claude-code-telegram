@@ -76,6 +76,14 @@ class ProjectThreadManager:
                     if handled:
                         continue
 
+                # Skip if project is already mapped to a different chat
+                any_mapping = await self.repository.get_any_active_by_slug(
+                    project.slug,
+                )
+                if any_mapping and any_mapping.chat_id != chat_id:
+                    result.reused += 1
+                    continue
+
                 await self._create_and_map_topic(
                     bot=bot,
                     project=project,
