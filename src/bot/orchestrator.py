@@ -151,12 +151,17 @@ class MessageOrchestrator:
             should_enforce = self.settings.enable_project_threads
 
             if should_enforce:
+                is_dm = (
+                    update.effective_chat
+                    and getattr(update.effective_chat, "type", "") == "private"
+                )
                 if self.settings.project_threads_mode == "private":
                     should_enforce = not is_sync_bypass and not (
                         is_start_bypass and message_thread_id is None
                     )
                 else:
-                    should_enforce = not is_sync_bypass
+                    # In group mode, allow DMs to bypass thread enforcement
+                    should_enforce = not is_sync_bypass and not is_dm
 
             if should_enforce:
                 allowed = await self._apply_thread_routing_context(update, context)
