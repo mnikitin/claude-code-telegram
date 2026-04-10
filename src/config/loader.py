@@ -90,9 +90,18 @@ def _apply_environment_overrides(settings: Settings, env: Optional[str]) -> Sett
     else:
         logger.warning("Unknown environment, using default settings", environment=env)
 
-    # Apply overrides
+    # Apply overrides only for keys not explicitly set via environment variables
     for key, value in overrides.items():
         if hasattr(settings, key):
+            env_var = key.upper()
+            if os.environ.get(env_var) is not None:
+                logger.debug(
+                    "Skipping environment override (explicit env var set)",
+                    key=key,
+                    env_var=env_var,
+                    environment=env,
+                )
+                continue
             setattr(settings, key, value)
             logger.debug(
                 "Applied environment override", key=key, value=value, environment=env
