@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
     )
+    claude_effort: Optional[Literal["low", "medium", "high", "max"]] = Field(
+        None,
+        description="Effort level for thinking depth (low/medium/high/max). "
+        "Defaults to SDK default if unset.",
+    )
     claude_max_turns: int = Field(
         DEFAULT_CLAUDE_MAX_TURNS, description="Max conversation turns"
     )
