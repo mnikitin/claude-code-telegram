@@ -309,14 +309,14 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # SDK >=0.1.x requires list[str] (not None) for allowed/disallowed.
+            # Empty list means "no restriction" — the SDK skips the CLI flag.
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools: list[str] = []
+                sdk_disallowed_tools: list[str] = []
             else:
-                sdk_allowed_tools = self.config.claude_allowed_tools
-                sdk_disallowed_tools = self.config.claude_disallowed_tools
+                sdk_allowed_tools = self.config.claude_allowed_tools or []
+                sdk_disallowed_tools = self.config.claude_disallowed_tools or []
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
