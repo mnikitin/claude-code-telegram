@@ -5,6 +5,7 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -181,6 +182,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "startup_time": datetime.now(UTC),
     }
 
     bot = ClaudeCodeBot(config, dependencies)

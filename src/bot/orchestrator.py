@@ -9,6 +9,7 @@ import asyncio
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -115,6 +116,30 @@ _TOOL_ICONS: Dict[str, str] = {
 def _tool_icon(name: str) -> str:
     """Return emoji for a tool, with a default wrench."""
     return _TOOL_ICONS.get(name, "\U0001f527")
+
+
+def _format_relative(iso_ts: str) -> str:
+    """Format an ISO timestamp as a short relative-time string (e.g. '3h ago')."""
+    if not iso_ts:
+        return "?"
+    try:
+        ts = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return "?"
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - ts
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return "just now"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    return f"{days}d ago"
 
 
 @dataclass
@@ -333,6 +358,10 @@ class MessageOrchestrator:
             ("verbose", self.agentic_verbose),
             ("model", self.agentic_model),
             ("effort", self.agentic_effort),
+            ("cost", self.agentic_cost),
+            ("cancel", self.agentic_cancel),
+            ("sessions", self.agentic_sessions),
+            ("health", self.agentic_health),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -468,6 +497,10 @@ class MessageOrchestrator:
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("model", "Set Claude model for this session"),
                 BotCommand("effort", "Set thinking effort (low/medium/high/max)"),
+                BotCommand("cost", "Show spend and budget"),
+                BotCommand("cancel", "Stop current request"),
+                BotCommand("sessions", "List recent sessions"),
+                BotCommand("health", "Show bot uptime and version"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -762,6 +795,186 @@ class MessageOrchestrator:
                 user_id=update.effective_user.id,
                 command="effort",
                 args=[audit_action],
+                success=True,
+            )
+
+    async def agentic_cost(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show user's cost summary: /cost."""
+        user_id = update.effective_user.id if update.effective_user else 0
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+
+        summary = await claude_integration.get_user_summary(user_id)
+        total_cost = summary.get("total_cost", 0.0)
+        total_sessions = summary.get("total_sessions", 0)
+        active_sessions = summary.get("active_sessions", 0)
+        total_messages = summary.get("total_messages", 0)
+
+        limit = self.settings.claude_max_cost_per_user
+        remaining = max(0.0, limit - total_cost)
+        pct = (total_cost / limit * 100) if limit > 0 else 0.0
+
+        storage = context.bot_data.get("storage")
+        today_cost = 0.0
+        today_requests = 0
+        if storage is not None:
+            try:
+                daily = await storage.costs.get_user_daily_costs(user_id, days=1)
+                if daily:
+                    today_cost = float(daily[0].daily_cost)
+                    today_requests = int(daily[0].request_count)
+            except Exception as exc:
+                logger.debug("Failed to fetch daily costs", error=str(exc))
+
+        lines = [
+            "💰 <b>Cost summary</b>",
+            f"  Today: <b>${today_cost:.4f}</b> ({today_requests} req)",
+            f"  All-time: <b>${total_cost:.4f}</b> ({total_messages} msg)",
+            f"  Sessions: {active_sessions} active / {total_sessions} total",
+            f"  Budget: <b>${remaining:.2f}</b> of ${limit:.2f} left ({pct:.0f}% used)",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=user_id, command="cost", args=[], success=True
+            )
+
+    async def agentic_cancel(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Interrupt the user's currently running Claude request: /cancel."""
+        user_id = update.effective_user.id if update.effective_user else 0
+        active = self._active_requests.get(user_id)
+
+        if not active:
+            await update.message.reply_text("No active request to cancel.")
+        elif active.interrupted:
+            await update.message.reply_text("Already stopping...")
+        else:
+            active.interrupt_event.set()
+            active.interrupted = True
+            await update.message.reply_text("Stopping current request...")
+            try:
+                await active.progress_msg.edit_text("Stopping...", reply_markup=None)
+            except Exception:
+                pass
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=user_id,
+                command="cancel",
+                args=[],
+                success=bool(active),
+            )
+
+    async def agentic_sessions(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """List recent sessions for the user: /sessions."""
+        user_id = update.effective_user.id if update.effective_user else 0
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await update.message.reply_text("Claude integration not available.")
+            return
+
+        sessions = await claude_integration.get_user_sessions(user_id)
+        if not sessions:
+            await update.message.reply_text("No sessions yet. Send a message to start.")
+            return
+
+        current_id = context.user_data.get("claude_session_id")
+        # Most recent first, up to 10
+        sessions_sorted = sorted(
+            sessions, key=lambda s: s.get("last_used", ""), reverse=True
+        )[:10]
+
+        lines = [f"📋 <b>Recent sessions</b> ({len(sessions)} total)"]
+        for s in sessions_sorted:
+            project = Path(s["project_path"]).name or s["project_path"]
+            cost = float(s.get("total_cost", 0.0))
+            msgs = int(s.get("message_count", 0))
+            marker = " ←" if s["session_id"] == current_id else ""
+            expired = " (expired)" if s.get("expired") else ""
+            last_used = _format_relative(s.get("last_used", ""))
+            lines.append(
+                f"  <code>{escape_html(project)}</code> · "
+                f"{last_used} · ${cost:.4f} · {msgs} msg{expired}{marker}"
+            )
+
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=user_id, command="sessions", args=[], success=True
+            )
+
+    async def agentic_health(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show process health and enabled features: /health."""
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _pkg_version
+
+        from src import __version__ as app_version
+
+        startup = context.bot_data.get("startup_time")
+        uptime_str = "unknown"
+        if isinstance(startup, datetime):
+            delta = datetime.now(UTC) - startup
+            total_s = int(delta.total_seconds())
+            days, rem = divmod(total_s, 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes, _ = divmod(rem, 60)
+            parts = []
+            if days:
+                parts.append(f"{days}d")
+            if hours:
+                parts.append(f"{hours}h")
+            parts.append(f"{minutes}m")
+            uptime_str = " ".join(parts)
+
+        try:
+            sdk_version = _pkg_version("claude-agent-sdk")
+        except PackageNotFoundError:
+            sdk_version = "unknown"
+
+        flags: List[str] = []
+        if self.settings.enable_api_server:
+            flags.append(f"api:{self.settings.api_server_port}")
+        if self.settings.enable_scheduler:
+            flags.append("scheduler")
+        if self.settings.enable_mcp:
+            flags.append("mcp")
+        if self.settings.enable_project_threads:
+            flags.append(f"threads:{self.settings.project_threads_mode}")
+        if self.settings.notification_chat_ids:
+            flags.append("notifications")
+        flags_str = ", ".join(flags) if flags else "none"
+
+        lines = [
+            "🩺 <b>Health</b>",
+            f"  Bot version: <code>{escape_html(app_version)}</code>",
+            f"  SDK version: <code>{escape_html(sdk_version)}</code>",
+            f"  Uptime: {uptime_str}",
+            f"  Mode: {'agentic' if self.settings.agentic_mode else 'classic'}",
+            f"  Features: {escape_html(flags_str)}",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger and update.effective_user:
+            await audit_logger.log_command(
+                user_id=update.effective_user.id,
+                command="health",
+                args=[],
                 success=True,
             )
 
