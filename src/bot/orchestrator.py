@@ -331,6 +331,8 @@ class MessageOrchestrator:
             ("new", self.agentic_new),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("model", self.agentic_model),
+            ("effort", self.agentic_effort),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -464,6 +466,8 @@ class MessageOrchestrator:
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("model", "Set Claude model for this session"),
+                BotCommand("effort", "Set thinking effort (low/medium/high/max)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -592,6 +596,16 @@ class MessageOrchestrator:
             return int(user_override)
         return self.settings.verbose_level
 
+    def _get_model_override(self, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+        """Return per-user model override, or None to fall back to config."""
+        value = context.user_data.get("claude_model_override")
+        return value if value else None
+
+    def _get_effort_override(self, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+        """Return per-user effort override, or None to fall back to config."""
+        value = context.user_data.get("claude_effort_override")
+        return value if value else None
+
     async def agentic_verbose(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -626,6 +640,130 @@ class MessageOrchestrator:
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
             parse_mode="HTML",
         )
+
+    async def agentic_model(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Set Claude model for this user: /model [name|default]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            override = self._get_model_override(context)
+            configured = self.settings.claude_model
+            current = override or configured or "SDK default"
+            source = (
+                "session override"
+                if override
+                else ("config" if configured else "unset")
+            )
+            await update.message.reply_text(
+                f"Model: <b>{escape_html(current)}</b> ({source})\n\n"
+                "Usage: <code>/model &lt;name&gt;</code> or "
+                "<code>/model default</code> to reset.\n"
+                "Examples: <code>claude-opus-4-5</code>, "
+                "<code>claude-sonnet-4-5</code>, "
+                "<code>claude-haiku-4-5</code>, or any full model ID.",
+                parse_mode="HTML",
+            )
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger and update.effective_user:
+                await audit_logger.log_command(
+                    user_id=update.effective_user.id,
+                    command="model",
+                    args=[],
+                    success=True,
+                )
+            return
+
+        value = args[0].strip()
+        if value.lower() in ("default", "reset", "none", "unset"):
+            context.user_data.pop("claude_model_override", None)
+            fallback = self.settings.claude_model or "SDK default"
+            await update.message.reply_text(
+                f"Model override cleared. Using <b>{escape_html(fallback)}</b>.",
+                parse_mode="HTML",
+            )
+            audit_action = "reset"
+        else:
+            context.user_data["claude_model_override"] = value
+            await update.message.reply_text(
+                f"Model set to <b>{escape_html(value)}</b> for this session.",
+                parse_mode="HTML",
+            )
+            audit_action = value
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger and update.effective_user:
+            await audit_logger.log_command(
+                user_id=update.effective_user.id,
+                command="model",
+                args=[audit_action],
+                success=True,
+            )
+
+    async def agentic_effort(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Set thinking effort for this user: /effort [low|medium|high|max|default]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        valid = {"low", "medium", "high", "max"}
+
+        if not args:
+            override = self._get_effort_override(context)
+            configured = self.settings.claude_effort
+            current = override or configured or "SDK default"
+            source = (
+                "session override"
+                if override
+                else ("config" if configured else "unset")
+            )
+            await update.message.reply_text(
+                f"Effort: <b>{escape_html(current)}</b> ({source})\n\n"
+                "Usage: <code>/effort low|medium|high|max</code> or "
+                "<code>/effort default</code> to reset.",
+                parse_mode="HTML",
+            )
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger and update.effective_user:
+                await audit_logger.log_command(
+                    user_id=update.effective_user.id,
+                    command="effort",
+                    args=[],
+                    success=True,
+                )
+            return
+
+        value = args[0].strip().lower()
+        if value in ("default", "reset", "none", "unset"):
+            context.user_data.pop("claude_effort_override", None)
+            fallback = self.settings.claude_effort or "SDK default"
+            await update.message.reply_text(
+                f"Effort override cleared. Using <b>{escape_html(fallback)}</b>.",
+                parse_mode="HTML",
+            )
+            audit_action = "reset"
+        elif value in valid:
+            context.user_data["claude_effort_override"] = value
+            await update.message.reply_text(
+                f"Effort set to <b>{value}</b> for this session.",
+                parse_mode="HTML",
+            )
+            audit_action = value
+        else:
+            await update.message.reply_text(
+                "Please use: <code>/effort low|medium|high|max</code> "
+                "or <code>/effort default</code>.",
+                parse_mode="HTML",
+            )
+            return
+
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger and update.effective_user:
+            await audit_logger.log_command(
+                user_id=update.effective_user.id,
+                command="effort",
+                args=[audit_action],
+                success=True,
+            )
 
     def _format_verbose_progress(
         self,
@@ -1019,6 +1157,8 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                model=self._get_model_override(context),
+                effort=self._get_effort_override(context),
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1269,6 +1409,8 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model=self._get_model_override(context),
+                effort=self._get_effort_override(context),
             )
 
             if force_new:
@@ -1479,6 +1621,8 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 images=images,
+                model=self._get_model_override(context),
+                effort=self._get_effort_override(context),
             )
         finally:
             heartbeat.cancel()

@@ -780,6 +780,39 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].model is None
 
+    async def test_model_and_effort_override_params(self, tmp_path):
+        """Per-call model/effort override config values."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_model="claude-sonnet-4-5",
+            claude_effort="medium",
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+                model="claude-opus-4-5",
+                effort="high",
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-opus-4-5"
+        assert captured_options[0].effort == "high"
+
 
 class TestClaudeMCPErrors:
     """Test MCP-specific error handling."""

@@ -4,7 +4,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Literal, Optional, cast
 
 import structlog
 from claude_agent_sdk import (
@@ -277,6 +277,8 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        model: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -318,10 +320,17 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = self.config.claude_allowed_tools or []
                 sdk_disallowed_tools = self.config.claude_disallowed_tools or []
 
+            effective_model = model if model is not None else self.config.claude_model
+            effective_effort: Optional[Literal["low", "medium", "high", "max"]] = (
+                cast(Literal["low", "medium", "high", "max"], effort)
+                if effort is not None
+                else self.config.claude_effort
+            )
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
-                model=self.config.claude_model or None,
+                model=effective_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
@@ -336,7 +345,7 @@ class ClaudeSDKManager:
                 system_prompt=base_prompt,
                 setting_sources=["project"],
                 stderr=_stderr_callback,
-                effort=self.config.claude_effort or None,
+                effort=effective_effort or None,
             )
 
             # Pass MCP server configuration if enabled
