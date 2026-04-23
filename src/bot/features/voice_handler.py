@@ -1,6 +1,8 @@
-"""Handle voice message transcription via Mistral (Voxtral), OpenAI (Whisper), or local whisper.cpp."""
+"""Handle voice message transcription via Mistral (Voxtral), OpenAI (Whisper), local whisper.cpp, or TAPS."""
 
 import asyncio
+import json
+import shlex
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -91,6 +93,8 @@ class VoiceHandler:
             transcription = await self._transcribe_local(voice_bytes)
         elif self.config.voice_provider == "openai":
             transcription = await self._transcribe_openai(voice_bytes)
+        elif self.config.voice_provider == "taps":
+            transcription = await self._transcribe_taps(voice_bytes)
         else:
             transcription = await self._transcribe_mistral(voice_bytes)
 
@@ -332,6 +336,99 @@ class VoiceHandler:
                 error_type=type(exc).__name__,
             )
             raise RuntimeError("Local whisper.cpp transcription failed.") from exc
+
+    # -- TAPS provider --
+
+    async def _transcribe_taps(self, voice_bytes: bytes) -> str:
+        """Transcribe audio via the TAPS CLI.
+
+        TAPS accepts OGG directly (runs ffmpeg internally), reads its own
+        `config.toml` for defaults, and emits a JSON contract on stdout.
+        CLI args here override the config.toml defaults.
+        """
+        binary = self.config.resolved_taps_binary
+        if not Path(binary).is_file():
+            raise RuntimeError(
+                f"TAPS binary not found at '{binary}'. "
+                "Set TAPS_BINARY_PATH or install TAPS "
+                "(https://github.com/...) at ~/Projects/taps."
+            )
+
+        tmp_dir = None
+        try:
+            tmp_dir = tempfile.mkdtemp(prefix="voice_")
+            ogg_path = Path(tmp_dir) / "voice.ogg"
+            ogg_path.write_bytes(voice_bytes)
+
+            argv = [binary, str(ogg_path), "--format", "json", "--quiet"]
+            if self.config.taps_language:
+                argv.extend(["--language", self.config.taps_language])
+            if self.config.taps_model:
+                argv.extend(["--model", self.config.taps_model])
+            if self.config.taps_extra_args:
+                argv.extend(shlex.split(self.config.taps_extra_args))
+
+            stdout, stderr, returncode = await self._run_taps(argv)
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        payload = self._parse_taps_stdout(stdout, stderr, returncode)
+        text = (payload.get("text") or "").strip()
+        if not text:
+            raise ValueError("TAPS transcription returned an empty response.")
+        return text
+
+    async def _run_taps(self, argv: list[str]) -> tuple[bytes, bytes, Optional[int]]:
+        """Execute TAPS and return (stdout, stderr, returncode)."""
+        timeout = self.config.taps_timeout_seconds
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"TAPS binary not executable: {argv[0]}") from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            raise RuntimeError(f"TAPS transcription timed out after {timeout}s.")
+
+        return stdout, stderr, process.returncode
+
+    def _parse_taps_stdout(
+        self, stdout: bytes, stderr: bytes, returncode: Optional[int]
+    ) -> dict[str, Any]:
+        """Parse TAPS JSON output; surface `ok: false` errors."""
+        raw = stdout.decode(errors="replace").strip()
+
+        try:
+            payload = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            logger.warning(
+                "TAPS returned non-JSON stdout",
+                return_code=returncode,
+                stderr=stderr.decode(errors="replace")[:300],
+            )
+            raise RuntimeError("TAPS transcription failed: non-JSON output.")
+
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            err = payload.get("error") if isinstance(payload, dict) else None
+            code = err.get("code") if isinstance(err, dict) else None
+            logger.warning(
+                "TAPS reported an error",
+                return_code=returncode,
+                error_code=code,
+                stderr=stderr.decode(errors="replace")[:300],
+            )
+            raise RuntimeError(f"TAPS transcription failed ({code or 'UNKNOWN'}).")
+
+        return payload
 
     def _resolve_whisper_binary(self) -> str:
         """Resolve and validate the whisper.cpp binary path on first use."""

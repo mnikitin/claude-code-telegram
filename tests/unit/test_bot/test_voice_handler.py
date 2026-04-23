@@ -531,3 +531,224 @@ async def test_transcribe_local_whisper_nonzero_exit(local_voice_handler):
     ):
         with pytest.raises(RuntimeError, match="transcription failed"):
             await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+# --- TAPS provider tests ---
+
+
+@pytest.fixture
+def taps_config():
+    """Create a mock config with TAPS settings."""
+    cfg = MagicMock()
+    cfg.voice_provider = "taps"
+    cfg.resolved_taps_binary = "/home/u/Projects/taps/transcribe.sh"
+    cfg.taps_language = "ru"
+    cfg.taps_model = None
+    cfg.taps_extra_args = None
+    cfg.taps_timeout_seconds = 300
+    cfg.voice_max_file_size_mb = 20
+    cfg.voice_max_file_size_bytes = 20 * 1024 * 1024
+    return cfg
+
+
+@pytest.fixture
+def taps_voice_handler(taps_config):
+    """Create a VoiceHandler instance with TAPS config."""
+    return VoiceHandler(config=taps_config)
+
+
+async def test_process_voice_message_taps_dispatches(taps_voice_handler):
+    """process_voice_message routes to _transcribe_taps for taps provider."""
+    voice = _mock_voice(duration=5)
+    taps_voice_handler._transcribe_taps = AsyncMock(return_value="TAPS text")
+
+    result = await taps_voice_handler.process_voice_message(voice)
+
+    assert isinstance(result, ProcessedVoice)
+    assert result.transcription == "TAPS text"
+    assert result.duration == 5
+    taps_voice_handler._transcribe_taps.assert_awaited_once()
+
+
+async def test_transcribe_taps_success_with_language(taps_voice_handler):
+    """TAPS is invoked with --language from config and returns text field."""
+    recorded_argv = []
+
+    async def fake_subprocess(*args, **kwargs):
+        recorded_argv.extend(args)
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=(
+                '{"ok": true, "text": "  Привет, мир.  "}'.encode("utf-8"),
+                b"",
+            )
+        )
+        proc.returncode = 0
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        result = await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+    assert result == "Привет, мир."
+    assert "--format" in recorded_argv and "json" in recorded_argv
+    assert "--quiet" in recorded_argv
+    lang_idx = recorded_argv.index("--language")
+    assert recorded_argv[lang_idx + 1] == "ru"
+    assert "--model" not in recorded_argv
+
+
+async def test_transcribe_taps_passes_model_and_extra_args(taps_voice_handler):
+    """TAPS_MODEL and TAPS_EXTRA_ARGS are forwarded as CLI arguments."""
+    taps_voice_handler.config.taps_model = "large-v3-russian"
+    taps_voice_handler.config.taps_extra_args = "--diarize --num-speakers 2"
+
+    recorded_argv = []
+
+    async def fake_subprocess(*args, **kwargs):
+        recorded_argv.extend(args)
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b'{"ok": true, "text": "ok"}', b""))
+        proc.returncode = 0
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+    model_idx = recorded_argv.index("--model")
+    assert recorded_argv[model_idx + 1] == "large-v3-russian"
+    assert "--diarize" in recorded_argv
+    speakers_idx = recorded_argv.index("--num-speakers")
+    assert recorded_argv[speakers_idx + 1] == "2"
+
+
+async def test_transcribe_taps_skips_language_when_empty(taps_voice_handler):
+    """Empty TAPS_LANGUAGE skips --language so TAPS config.toml applies."""
+    taps_voice_handler.config.taps_language = ""
+
+    recorded_argv = []
+
+    async def fake_subprocess(*args, **kwargs):
+        recorded_argv.extend(args)
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b'{"ok": true, "text": "ok"}', b""))
+        proc.returncode = 0
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+    assert "--language" not in recorded_argv
+
+
+async def test_transcribe_taps_binary_missing(taps_voice_handler):
+    """Missing TAPS binary raises a clear RuntimeError before spawning."""
+    with patch(
+        "src.bot.features.voice_handler.Path.is_file",
+        return_value=False,
+    ):
+        with pytest.raises(RuntimeError, match="TAPS binary not found"):
+            await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+
+async def test_transcribe_taps_reports_error_contract(taps_voice_handler):
+    """`ok: false` JSON is surfaced as a RuntimeError with error code."""
+
+    async def fake_subprocess(*args, **kwargs):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=(
+                b'{"ok": false, "error": {"code": "BACKEND_NOT_AVAILABLE", '
+                b'"message": "Install mlx"}}',
+                b"",
+            )
+        )
+        proc.returncode = 3
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="BACKEND_NOT_AVAILABLE"):
+            await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+
+async def test_transcribe_taps_empty_text(taps_voice_handler):
+    """Empty text in a successful response is treated as an error."""
+
+    async def fake_subprocess(*args, **kwargs):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(b'{"ok": true, "text": "   "}', b""))
+        proc.returncode = 0
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(ValueError, match="empty response"):
+            await taps_voice_handler._transcribe_taps(b"fake-ogg")
+
+
+async def test_transcribe_taps_non_json_stdout(taps_voice_handler):
+    """Non-JSON stdout raises a RuntimeError without surfacing raw bytes."""
+
+    async def fake_subprocess(*args, **kwargs):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=(b"segmentation fault", b"core dumped")
+        )
+        proc.returncode = 139
+        return proc
+
+    with (
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="non-JSON output"):
+            await taps_voice_handler._transcribe_taps(b"fake-ogg")

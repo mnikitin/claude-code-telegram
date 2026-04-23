@@ -206,9 +206,11 @@ class Settings(BaseSettings):
     enable_voice_messages: bool = Field(
         True, description="Enable voice message transcription"
     )
-    voice_provider: Literal["mistral", "openai", "local"] = Field(
+    voice_provider: Literal["mistral", "openai", "local", "taps"] = Field(
         "mistral",
-        description="Voice transcription provider: 'mistral', 'openai', or 'local'",
+        description=(
+            "Voice transcription provider: 'mistral', 'openai', 'local', or 'taps'"
+        ),
     )
     mistral_api_key: Optional[SecretStr] = Field(
         None, description="Mistral API key for voice transcription"
@@ -246,6 +248,40 @@ class Settings(BaseSettings):
             "(e.g. 'base', 'small'). Defaults to 'base'. "
             "Named models resolve to ~/.cache/whisper-cpp/ggml-{name}.bin"
         ),
+    )
+    taps_binary_path: Optional[str] = Field(
+        None,
+        description=(
+            "Path to TAPS binary or wrapper script. "
+            "Used when VOICE_PROVIDER=taps. Defaults to ~/Projects/taps/transcribe.sh"
+        ),
+    )
+    taps_model: Optional[str] = Field(
+        None,
+        description=(
+            "TAPS model (alias or HuggingFace id). "
+            "If unset, TAPS uses the model from its own config.toml."
+        ),
+    )
+    taps_language: Optional[str] = Field(
+        "ru",
+        description=(
+            "Language passed to TAPS via --language (e.g. 'ru', 'en', 'auto'). "
+            "Leave empty to fall back to TAPS config.toml."
+        ),
+    )
+    taps_extra_args: Optional[str] = Field(
+        None,
+        description=(
+            "Extra CLI args appended to every TAPS invocation, parsed with "
+            "shell-style splitting (e.g. '--diarize --num-speakers 2')."
+        ),
+    )
+    taps_timeout_seconds: int = Field(
+        300,
+        description="Subprocess timeout for TAPS invocations, in seconds.",
+        ge=10,
+        le=3600,
     )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
@@ -340,7 +376,12 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", "project_threads_chat_ids", mode="before")
+    @field_validator(
+        "allowed_users",
+        "notification_chat_ids",
+        "project_threads_chat_ids",
+        mode="before",
+    )
     @classmethod
     def parse_int_list(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated integer lists."""
@@ -450,9 +491,10 @@ class Settings(BaseSettings):
         if v is None:
             return "mistral"
         provider = str(v).strip().lower()
-        if provider not in {"mistral", "openai", "local"}:
+        if provider not in {"mistral", "openai", "local", "taps"}:
             raise ValueError(
-                "voice_provider must be one of ['mistral', 'openai', 'local']"
+                "voice_provider must be one of "
+                "['mistral', 'openai', 'local', 'taps']"
             )
         return provider
 
@@ -549,6 +591,8 @@ class Settings(BaseSettings):
             return "whisper-1"
         if self.voice_provider == "local":
             return self.whisper_cpp_model_path or "base"
+        if self.voice_provider == "taps":
+            return self.taps_model or "taps-config"
         return "voxtral-mini-latest"
 
     @property
@@ -561,7 +605,7 @@ class Settings(BaseSettings):
         """API key environment variable required for the configured voice provider."""
         if self.voice_provider == "openai":
             return "OPENAI_API_KEY"
-        if self.voice_provider == "local":
+        if self.voice_provider in ("local", "taps"):
             return ""
         return "MISTRAL_API_KEY"
 
@@ -572,6 +616,8 @@ class Settings(BaseSettings):
             return "OpenAI Whisper"
         if self.voice_provider == "local":
             return "Local whisper.cpp"
+        if self.voice_provider == "taps":
+            return "TAPS"
         return "Mistral Voxtral"
 
     @property
@@ -586,3 +632,9 @@ class Settings(BaseSettings):
         if "/" in path_or_name or path_or_name.endswith(".bin"):
             return path_or_name
         return str(Path.home() / ".cache" / "whisper-cpp" / f"ggml-{path_or_name}.bin")
+
+    @property
+    def resolved_taps_binary(self) -> str:
+        """Resolve TAPS binary path, defaulting to ~/Projects/taps/transcribe.sh."""
+        path = self.taps_binary_path or "~/Projects/taps/transcribe.sh"
+        return str(Path(path).expanduser())

@@ -1929,6 +1929,12 @@ class MessageOrchestrator:
                 "Ensure whisper.cpp is installed and the model file exists. "
                 "Check WHISPER_CPP_BINARY_PATH and WHISPER_CPP_MODEL_PATH settings."
             )
+        if self.settings.voice_provider == "taps":
+            return (
+                "Voice processing is not available. "
+                f"Ensure the TAPS CLI exists at {self.settings.resolved_taps_binary} "
+                "or set TAPS_BINARY_PATH."
+            )
         return (
             "Voice processing is not available. "
             f"Set {self.settings.voice_provider_api_key_env} "

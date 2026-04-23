@@ -1025,6 +1025,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "<code>WHISPER_CPP_MODEL_PATH</code> if needed.",
                 parse_mode="HTML",
             )
+        elif settings.voice_provider == "taps":
+            await update.message.reply_text(
+                "🎙️ <b>Voice Messages</b>\n\n"
+                "Voice transcription is not available.\n"
+                "Provider: <code>TAPS</code>\n"
+                f"Ensure the TAPS CLI exists at "
+                f"<code>{settings.resolved_taps_binary}</code> "
+                "or set <code>TAPS_BINARY_PATH</code>.",
+                parse_mode="HTML",
+            )
         else:
             await update.message.reply_text(
                 "🎙️ <b>Voice Messages</b>\n\n"

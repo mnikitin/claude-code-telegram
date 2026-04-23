@@ -78,6 +78,10 @@ class FeatureFlags:
             return False
         if self.settings.voice_provider == "local":
             return True  # No API key needed for local whisper.cpp
+        if self.settings.voice_provider == "taps":
+            return (
+                True  # No API key needed; TAPS binary availability checked at call time
+            )
         if self.settings.voice_provider == "openai":
             return self.settings.openai_api_key is not None
         return self.settings.mistral_api_key is not None

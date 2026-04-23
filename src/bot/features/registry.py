@@ -78,9 +78,10 @@ class FeatureRegistry:
         except Exception as e:
             logger.error("Failed to initialize image handler", error=str(e))
 
-        # Voice transcription - requires provider-specific API key (or local)
+        # Voice transcription - requires provider-specific API key
+        # (local/taps providers run a subprocess, no API key needed)
         voice_key_available = (
-            (self.config.voice_provider == "local")
+            self.config.voice_provider in ("local", "taps")
             or (self.config.voice_provider == "openai" and self.config.openai_api_key)
             or (self.config.voice_provider == "mistral" and self.config.mistral_api_key)
         )
